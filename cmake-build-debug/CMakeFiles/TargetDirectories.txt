@@ -1,3 +1,0 @@
-/home/sergiu/Documents/MyDocuments/Code/College/nBody/cmake-build-debug/CMakeFiles/edit_cache.dir
-/home/sergiu/Documents/MyDocuments/Code/College/nBody/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/home/sergiu/Documents/MyDocuments/Code/College/nBody/cmake-build-debug/CMakeFiles/nBody.dir
