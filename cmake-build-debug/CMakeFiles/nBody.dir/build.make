@@ -90,6 +90,8 @@ nBody_EXTERNAL_OBJECTS =
 
 nBody: CMakeFiles/nBody.dir/main.cpp.o
 nBody: CMakeFiles/nBody.dir/build.make
+nBody: /usr/lib64/openmpi/libmpi_cxx.so
+nBody: /usr/lib64/openmpi/libmpi.so
 nBody: CMakeFiles/nBody.dir/link.txt
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/sergiu/Documents/MyDocuments/Code/College/nBody/cmake-build-debug/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Linking CXX executable nBody"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/nBody.dir/link.txt --verbose=$(VERBOSE)

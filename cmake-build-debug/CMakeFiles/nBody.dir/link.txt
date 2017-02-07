@@ -1,1 +1,1 @@
-/usr/bin/c++   -g   CMakeFiles/nBody.dir/main.cpp.o  -o nBody 
+/usr/bin/c++   -g  -Wl,-rpath  -Wl,/usr/lib/openmpi  -Wl,--enable-new-dtags  CMakeFiles/nBody.dir/main.cpp.o  -o nBody -rdynamic /usr/lib64/openmpi/libmpi_cxx.so /usr/lib64/openmpi/libmpi.so -Wl,-rpath,/usr/lib64/openmpi 
