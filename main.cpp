@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <boost/mpi.hpp>
 #include <cstdlib>
+#include <queue>
 
 #include "common.h"
 #include "common/shader.hpp"
@@ -34,23 +35,23 @@ vector<Particle> particles;
 vector<Cell> cells;
 
 
+// Return a VertexBuffer for particle positions.
 GLfloat* getVertexBufferData()
 {
     GLfloat *vertexBuffer = new GLfloat[particles.size() * 3];
-    int crt = 0;
 
-    for(int i=0; i<particles.size(); i++)
+    for(int i=0, j=0; i<particles.size(); i++, j+=3)
     {
-        vertexBuffer[crt] = (GLfloat)particles[i].x;
-        vertexBuffer[crt+1] = (GLfloat)particles[i].y;
-        vertexBuffer[crt+2] = (GLfloat)particles[i].z;
-        crt += 3;
+        vertexBuffer[j] = (GLfloat)particles[i].x;
+        vertexBuffer[j+1] = (GLfloat)particles[i].y;
+        vertexBuffer[j+2] = (GLfloat)particles[i].z;
     }
 
     return vertexBuffer;
 }
 
 
+// Initialize graphics.
 void initGraphics()
 {
     if(!glfwInit())
@@ -100,7 +101,7 @@ void initGraphics()
     // Compile shaders
     programID = LoadShaders("../shaders/VertexShader.vs.glsl", "../shaders/FragmentShader.fs.glsl");
 
-    // Get a handle for the "MVP" uniform
+    // Get a handle for the ModelViewProjection matrix.
     MatrixID = glGetUniformLocation(programID, "MVP");
 
     // Projection matrix : 45 degree Field of View, 4:3 ratio, display range : 0.1 unit <-> 100 units
@@ -127,7 +128,7 @@ void initGraphics()
 
 void initPhysics()
 {
-    // Initialize the particle vector.
+    // Initialize the particle vector with a plummer sphere density.
     Particle::plummerSphereDensity(particles, PARTICLE_COUNT, SOFTENING_LENGTH, G);
 }
 
@@ -138,7 +139,7 @@ void init()
     initPhysics();
 }
 
-
+// Render the curent step.
 void render()
 {
     // Clear the screen
@@ -201,20 +202,19 @@ int getNumberOfCellsInTree(Cell* cell)
     }
 }
 
-
+// Run a simulation step.
 void simulate()
 {
     mpi::communicator world;
 
     // First create the empty tree up to the second level (so that we have better potential for parallelism).
+    // This way we can scale up to 64 cores.
     Cell *root = new Cell(COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE);
     root->expandChildren();
+
     std::vector<Cell*> secondLevelCells;
-
-
     for(int i=0; i<root->children.size(); i++)
     {
-        // Second level expansion for better parallelism.
         root->children[i]->expandChildren();
 
         for(int j=0; j<root->children[i]->children.size(); j++)
@@ -223,16 +223,15 @@ void simulate()
         }
     }
 
-    std::vector<Cell*> cellsOfThisProcess;
-
     // Split the second level cells among processes.
     // We split in a round robin style because the particles tend to be grouped in a couple of regions.
-    // If adjacent regions are processed by different processes we'll have better parallelism.
-    for(int i=world.rank(); i < secondLevelCells.size(); i+=world.size())
+    // Thus, if adjacent regions are processed by different processes we'll have better parallelism.
+    std::vector<Cell*> cellsOfThisProcess;
+
+    for(int i = world.rank(); i < secondLevelCells.size(); i+=world.size())
     {
         cellsOfThisProcess.push_back(secondLevelCells[i]);
     }
-
 
     // Add all the particles.
     // Trying to add a particle to the wrong cell of the tree is ignored, so we try to add all particles to all cells.
@@ -244,37 +243,32 @@ void simulate()
         }
     }
 
+    // Now it's time to assemble the partially constructed tress on the main process.
     // Create a serialized structure to hold cellsOfThisProcess information.
     vector<SerializedCell> serializedCellsOfThisProcess;
 
     for(int i=0; i<cellsOfThisProcess.size(); i++)
     {
         SerializedCell serializedCell;
+        serializedCell.particleVector = &particles;
+        serializedCell.serializeTree(cellsOfThisProcess[i]);
+
         serializedCellsOfThisProcess.push_back(serializedCell);
-        serializedCellsOfThisProcess[i].particleVector = &particles;
-        serializedCellsOfThisProcess[i].serializeTree(cellsOfThisProcess[i]);
     }
 
+    // Gather the tree branches on the main process.
+    vector<vector<SerializedCell>> gatheredSecondLevelBranches;
+    mpi::gather(world, serializedCellsOfThisProcess, gatheredSecondLevelBranches, 0);
 
-    // We no longer need the un-serialized cells.
-    // Deleting root will also delete all the cells bounded to it recursively.
+    // Clear the old Cell data to clear up space for the new.
     delete root;
     secondLevelCells.clear();
     cellsOfThisProcess.clear();
 
-
-    // Gather the tree branches on the root process.
-    vector<vector<SerializedCell>> gatheredSecondLevelBranches;
-    mpi::gather(world, serializedCellsOfThisProcess, gatheredSecondLevelBranches, 0);
-
-    Cell *newRoot = new Cell(COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE);
-
-    // Rebuild the tree from branches
+    // Rebuild the tree from branches on the main process
     if(world.rank() == 0)
     {
-        // Deserialize
-        vector<vector<Cell*>> secondLevelBranches(gatheredSecondLevelBranches.size(), vector<Cell*>(0));
-
+        vector<Cell*> secondLevelBranches(64);
         for(int i=0; i<gatheredSecondLevelBranches.size(); i++)
         {
             for(int j=0; j<gatheredSecondLevelBranches[i].size(); j++)
@@ -282,72 +276,102 @@ void simulate()
                 // Set the particle vector pointer which was lost during serialization / deserialization.
                 gatheredSecondLevelBranches[i][j].particleVector = &particles;
 
-                //gatheredSecondLevelBranches[i][j].deserializeTree();
-                secondLevelBranches[i].push_back(gatheredSecondLevelBranches[i][j].deserializeTree());
+                secondLevelBranches[j * gatheredSecondLevelBranches.size() + i] = gatheredSecondLevelBranches[i][j].deserializeTree();
             }
         }
 
-        //Cell *newRoot = new Cell(COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE);
-        newRoot->expandChildren();
+        root = new Cell(COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE, COORDINATE_MIN_VALUE, COORDINATE_MAX_VALUE);
+        root->expandChildren();
 
-        for(int i=0; i<newRoot->children.size(); i++)
+        for(int i=0, k=0; i<root->children.size(); i++)
         {
-            newRoot->children[i]->expandChildren();
+            for(int j=0; j<root->children.size(); j++, k++)
+            {
+                root->children[i]->children.push_back(secondLevelBranches[k]);
+            }
         }
 
-        int crtChild=0, crtGrandchild=0;
-        for(int i=0; i<secondLevelBranches.size(); i++)
+        // Calculate center of gravity and total mass for the root and first level nodes.
+        for(int i=0; i<root->children.size(); i++)
         {
-            for(int j=0; j<secondLevelBranches[i].size(); j++)
+            for(int j=0; j<root->children[i]->children.size(); j++)
             {
-                newRoot->children[crtChild]->insertChildren(secondLevelBranches[i][j], crtGrandchild);
-                crtGrandchild++;
+                root->children[i]->xCenter = (root->children[i]->totalMass * root->children[i]->xCenter + root->children[i]->children[j]->totalMass * root->children[i]->children[j]->xCenter) / (root->children[i]->totalMass + root->children[i]->children[j]->totalMass);
+                root->children[i]->yCenter = (root->children[i]->totalMass * root->children[i]->yCenter + root->children[i]->children[j]->totalMass * root->children[i]->children[j]->yCenter) / (root->children[i]->totalMass + root->children[i]->children[j]->totalMass);
+                root->children[i]->zCenter = (root->children[i]->totalMass * root->children[i]->zCenter + root->children[i]->children[j]->totalMass * root->children[i]->children[j]->zCenter) / (root->children[i]->totalMass + root->children[i]->children[j]->totalMass);
 
-                if(crtGrandchild > newRoot->children[crtChild]->children.size())
+                root->children[i]->totalMass += root->children[i]->children[j]->totalMass;
+            }
+
+            root->xCenter = (root->totalMass * root->xCenter + root->children[i]->totalMass * root->children[i]->xCenter) / (root->totalMass + root->children[i]->totalMass);
+            root->yCenter = (root->totalMass * root->yCenter + root->children[i]->totalMass * root->children[i]->yCenter) / (root->totalMass + root->children[i]->totalMass);
+            root->zCenter = (root->totalMass * root->zCenter + root->children[i]->totalMass * root->children[i]->zCenter) / (root->totalMass + root->children[i]->totalMass);
+
+            root->totalMass += root->children[i]->totalMass;
+        }
+    }
+
+    // Broadcast the newly built tree to all other processes.
+    SerializedCell serializedRoot;
+
+    if(world.rank() == 0)
+    {
+        serializedRoot.particleVector = &particles;
+        serializedRoot.serializeTree(root);
+    }
+
+    mpi::broadcast(world, serializedRoot, 0);
+
+    if(world.rank() != 0)
+    {
+        root = serializedRoot.deserializeTree();
+    }
+
+    vector<Cell*> cells;
+    serializedRoot.sdrTraversal(cells, root);
+
+    // Update the velocity of the particles after interacting with other particles or clusters of particles.
+    for(int i = world.rank(); i < particles.size(); i+=world.size())
+    {
+        std::list<Cell*> cellQueue;
+        cellQueue.push_front(root);
+
+        while(!cellQueue.empty())
+        {
+            Cell *crtCell = cellQueue.front();
+            cellQueue.pop_front();
+
+            if(crtCell->isFarEnoughFromParticleToUseAsCluster(&particles[i]))
+            {
+                particles[i].forcePush(crtCell, TIMESTEP);
+            }
+            else
+            {
+                for(int j=0; j<crtCell->children.size(); j++)
                 {
-                    crtGrandchild = 0;
-                    crtChild++;
+                    cellQueue.push_back(crtCell->children[j]);
                 }
             }
         }
 
-        // Calculate center of gravity and total mass for the root node.
-        for(int i=0; i<newRoot->children.size(); i++)
-        {
-            newRoot->totalMass = newRoot->totalMass + newRoot->children[i]->totalMass;
-        }
-
-        for(int i=0; i<newRoot->children.size(); i++)
-        {
-            newRoot->xCenter = newRoot->xCenter + (newRoot->children[i]->totalMass * newRoot->children[i]->xCenter)/newRoot->totalMass;
-            newRoot->yCenter = newRoot->yCenter + (newRoot->children[i]->totalMass * newRoot->children[i]->yCenter)/newRoot->totalMass;
-            newRoot->zCenter = newRoot->zCenter + (newRoot->children[i]->totalMass * newRoot->children[i]->zCenter)/newRoot->totalMass;
-        }
+        // Update the particles position after it's velocity has been updated.
+        particles[i].updatePosition(TIMESTEP);
     }
 
-    world.barrier();
+    // Gather the partially calculated particle vectors on all processes and assemble the final particle vector
+    vector<vector<Particle>> gatheredParticleVectors;
+    mpi::all_gather(world, particles, gatheredParticleVectors);
 
-    cout<<world.rank()<<"\n";
-
-    world.barrier();
-
-    // Broadcast the newly built tree to all the processes.
-    SerializedCell serializedTree;
-    serializedTree.particleVector = &particles;
-
-    if(world.rank() == 0)
+    for(int i=0; i<gatheredParticleVectors.size(); i++)
     {
-        //serializedTree.serializeTree(newRoot);
+        for(int j=i; j<gatheredParticleVectors[i].size(); j+=gatheredParticleVectors.size())
+        {
+            particles[j] = gatheredParticleVectors[i][j];
+        }
     }
 
-
-//    boost::mpi::broadcast(world, serializedTree, 0);
-//////
-//////
-//////    mpi::broadcast(world, particles, 0);
-//
-//
-//    std::cout<<"End of simulation";
+    // Cleanup
+    delete root;
 }
 
 
@@ -356,7 +380,8 @@ int main(int argc, char** argv)
     mpi::environment env;
     mpi::communicator world;
 
-//    srand(time(NULL));
+//    srand(123);
+    srand(time(NULL));
 
     if(world.rank() == 0)
     {
@@ -365,21 +390,24 @@ int main(int argc, char** argv)
 
     mpi::broadcast(world, particles, 0);
 
+    while(true)
+    {
+        simulate();
 
-    simulate();
+        // Wait for simulation to end on all instances.
+        world.barrier();
 
-    // Wait for the simulation to end on all instances.
-//    world.barrier();
-//
-//    while(true)
-//    {
-//        // Simulate with all
-//
-//
-//        // Render
-//        if(world.rank() == 0)
-//        {
-//            render();
-//        }
-//    }
+        // Render on the main instance.
+        if(world.rank() == 0)
+        {
+            render();
+        }
+
+        // Render at about 60FPS.
+        nanosleep((const struct timespec[]){{0, 16666667}}, NULL);
+
+        world.barrier();
+    }
+
+    return 0;
 }

@@ -31,9 +31,6 @@ public:
         {
             ar << this->serializedCellMatrixInts[i];
         }
-
-        delete[] this->serializedCellMatrixFloats;
-        delete[] this->serializedCellMatrixInts;
     }
 
     template<class Archive>
@@ -45,15 +42,11 @@ public:
 
         for(int i=0; i<this->cellCount*10; i++)
         {
-            float aux;
-            ar>>aux;
-            this->serializedCellMatrixFloats[i] = aux;
+            ar>>this->serializedCellMatrixFloats[i];
         }
         for(int i=0; i<this->cellCount*10; i++)
         {
-            int aux;
-            ar>>aux;
-            this->serializedCellMatrixInts[i] = aux;
+            ar>>this->serializedCellMatrixInts[i];
         }
     }
 
@@ -64,9 +57,9 @@ public:
     }
 
     std::vector<Particle> *particleVector;
-    float* serializedCellMatrixFloats=nullptr;
+    float* serializedCellMatrixFloats = nullptr;
     int* serializedCellMatrixInts = nullptr;
-    long cellCount=0;
+    long cellCount = 0;
 
     void sdrTraversal(std::vector<Cell*>&, Cell*);
     void serializeTree(Cell*);
@@ -74,6 +67,12 @@ public:
 
     SerializedCell(){};
     SerializedCell(const SerializedCell &);
+
+    ~SerializedCell()
+    {
+        delete[] serializedCellMatrixFloats;
+        delete[] serializedCellMatrixInts;
+    };
 };
 
 

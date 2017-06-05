@@ -33,6 +33,7 @@ public:
 
     Particle();
     Particle(float, float, float, float, float, float, float);
+    Particle(const Particle &);
 
     static void plummerSphereDensity(std::vector<Particle>&, int, int, float);
 };

@@ -18,6 +18,24 @@ Cell::Cell(float xMin, float xMax, float yMin, float yMax, float zMin, float zMa
 };
 
 
+Cell::Cell(const Cell &obj)
+{
+    this->xMin = obj.xMin;
+    this->xMax = obj.xMax;
+    this->yMin = obj.yMin;
+    this->yMax = obj.yMax;
+    this->zMin = obj.zMin;
+    this->zMax = obj.zMax;
+
+    this->particle = obj.particle;
+    this->particleCount = obj.particleCount;
+    this->totalMass = obj.totalMass;
+    this->xCenter = obj.xCenter;
+    this->yCenter = obj.yCenter;
+    this->zCenter = obj.zCenter;
+}
+
+
 void Cell::setCoordinates(float xMin, float xMax, float yMin, float yMax, float zMin, float zMax)
 {
     this->xMin = xMin; this->xMax = xMax;
@@ -28,28 +46,21 @@ void Cell::setCoordinates(float xMin, float xMax, float yMin, float yMax, float 
 
 bool Cell::isInsideCell(float x, float y, float z)
 {
-    if
-    (
-            this->xMin < x && this->xMax >= x
-            && this->yMin < y && this->yMax >= y
-            && this->zMin < z && this->zMax >= z
-    )
-    {
-        return true;
-    }
-
-    return false;
+    return this->xMin < x && this->xMax >= x
+           && this->yMin < y && this->yMax >= y
+           && this->zMin < z && this->zMax >= z;
 }
 
 
+// Insert the particle in the Cell.
+// This only works if the particle's coordinates fall between the cell boundaries.
+// Otherwise the operation is ignored.
 void Cell::insertParticle(Particle* particle)
 {
     if(!this->isInsideCell(particle->x, particle->y, particle->z))
     {
         return;
     }
-
-    float totalMassBeforeInsertion = this->totalMass;
 
     if(this->particleCount > 0)
     {
@@ -73,10 +84,10 @@ void Cell::insertParticle(Particle* particle)
         this->particle = particle;
     }
 
+    this->xCenter = (this->totalMass * this->xCenter + particle->mass * particle->x) / (this->totalMass + particle->mass);
+    this->yCenter = (this->totalMass * this->yCenter + particle->mass * particle->y) / (this->totalMass + particle->mass);
+    this->zCenter = (this->totalMass * this->zCenter + particle->mass * particle->z) / (this->totalMass + particle->mass);
     this->totalMass = this->totalMass + particle->mass;
-    this->xCenter = (totalMassBeforeInsertion * this->xCenter + particle->mass * particle->x) / this->totalMass;
-    this->yCenter = (totalMassBeforeInsertion * this->yCenter + particle->mass * particle->y) / this->totalMass;
-    this->zCenter = (totalMassBeforeInsertion * this->zCenter + particle->mass * particle->z) / this->totalMass;
 
     this->particleCount += 1;
 }
@@ -87,7 +98,6 @@ void Cell::expandChildren()
     float xHalf = (this->xMin + this->xMax) / 2;
     float yHalf = (this->yMin + this->yMax) / 2;
     float zHalf = (this->zMin + this->zMax) / 2;
-
 
     Cell *c1 = new Cell(this->xMin, xHalf, this->yMin, yHalf, this->zMin, zHalf);
     Cell *c2 = new Cell(xHalf, this->xMax, this->yMin, yHalf, this->zMin, zHalf);
@@ -109,55 +119,23 @@ void Cell::expandChildren()
 }
 
 
-void Cell::insertChildren(Cell *cell, int position)
+bool Cell::isFarEnoughFromParticleToUseAsCluster(Particle *particle)
 {
-    if(!this->children.size())
-    {
-        this->expandChildren();
-    }
-
-    if(this->children[position] != nullptr && this->children.size() > position)
-    {
-        this->totalMass = this->totalMass - this->children[position]->totalMass;
-        this->particleCount = this->particleCount - this->children[position]->particleCount;
-        delete this->children[position];
-        this->children[position] = nullptr;
-    }
-
-    this->children[position] = cell;
-    this->totalMass = this->totalMass + cell->totalMass;
-
-    // Re-calculate center of mass.
-    float newXCenter=0, newYCenter=0, newZCenter=0;
-
-    for(int i=0; i<this->children.size(); i++)
-    {
-        newXCenter = newXCenter + (this->children[i]->totalMass * this->children[i]->xCenter)/this->totalMass;
-        newYCenter = newYCenter + (this->children[i]->totalMass * this->children[i]->yCenter)/this->totalMass;
-        newZCenter = newZCenter + (this->children[i]->totalMass * this->children[i]->zCenter)/this->totalMass;
-    }
-
-    this->xCenter = newXCenter;
-    this->yCenter = newYCenter;
-    this->zCenter = newZCenter;
-}
-
-
-bool Cell::isFarEnoughForClustering(Particle *particle)
-{
+    // Check if it's an internal node.
     if(this->children.size() > 0)
     {
         float s = this->xMax - this->xMin;
+
         float dx = particle->x - this->xCenter;
         float dy = particle->y - this->yCenter;
         float dz = particle->z - this->zCenter;
-        float d = pow(dx*dx + dy*dy + dz*dz, 0.5);
+        float d = (float)pow(dx*dx + dy*dy + dz*dz, 0.5);
 
         return (s/d) < OMEGA;
     }
+        // Otherwise, make sure we're not comparing the particle with itself.
     else
     {
         return particle != this->particle;
     }
 }
-

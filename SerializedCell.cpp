@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <vector>
 #include <iostream>
+#include <map>
 #include "Cell.h"
 
 
@@ -24,27 +25,19 @@ SerializedCell::SerializedCell(const SerializedCell &obj)
 }
 
 
-void SerializedCell::sdrTraversal(std::vector<Cell *>& supportVector, Cell *cell)
+void SerializedCell::sdrTraversal(std::vector<Cell *>& cells, Cell *cell)
 {
-    if(!cell->children.size())
+    for(int i=0; i < cell->children.size(); i++)
     {
-        supportVector.push_back(cell);
+        this->sdrTraversal(cells, cell->children[i]);
     }
-    else
-    {
-        for(int i=0; i<cell->children.size(); i++)
-        {
-            sdrTraversal(supportVector, cell->children[i]);
-        }
 
-        supportVector.push_back(cell);
-    }
+    cells.push_back(cell);
 }
 
 
 void SerializedCell::serializeTree(Cell* cell)
 {
-    std::cout<<"SERTREEE";
     if(this->serializedCellMatrixFloats != nullptr)
     {
         delete[] this->serializedCellMatrixFloats;
@@ -54,43 +47,43 @@ void SerializedCell::serializeTree(Cell* cell)
         delete[] this->serializedCellMatrixInts;
     }
 
-    std::vector<Cell*> supportVector;
-    sdrTraversal(supportVector, cell);
+    std::vector<Cell*> cells;
+    sdrTraversal(cells, cell);
 
-    for(int i=0; i<supportVector.size(); i++)
+    std::map<Cell*, int> cellAddressToSerializedIndex;
+
+    for(int i=0; i<cells.size(); i++)
     {
-        supportVector[i]->serialID = i;
+        cellAddressToSerializedIndex[cells[i]] = i;
     }
 
-    this->cellCount = supportVector.size();
+    this->cellCount = cells.size();
     this->serializedCellMatrixFloats = new float[this->cellCount * 10];
     this->serializedCellMatrixInts = new int[this->cellCount * 10];
 
-
-    for(int i=0; i<supportVector.size(); i++)
+    for(int i=0; i<cells.size(); i++)
     {
-        this->serializedCellMatrixFloats[i * 10 + 0] = supportVector[i]->xMin;
-        this->serializedCellMatrixFloats[i * 10 + 1] = supportVector[i]->xMax;
-        this->serializedCellMatrixFloats[i * 10 + 2] = supportVector[i]->yMin;
-        this->serializedCellMatrixFloats[i * 10 + 3] = supportVector[i]->yMax;
-        this->serializedCellMatrixFloats[i * 10 + 4] = supportVector[i]->zMin;
-        this->serializedCellMatrixFloats[i * 10 + 5] = supportVector[i]->zMax;
-        this->serializedCellMatrixFloats[i * 10 + 6] = supportVector[i]->xCenter;
-        this->serializedCellMatrixFloats[i * 10 + 7] = supportVector[i]->yCenter;
-        this->serializedCellMatrixFloats[i * 10 + 8] = supportVector[i]->zCenter;
-        this->serializedCellMatrixFloats[i * 10 + 9] = supportVector[i]->totalMass;
+        this->serializedCellMatrixFloats[i * 10 + 0] = cells[i]->xMin;
+        this->serializedCellMatrixFloats[i * 10 + 1] = cells[i]->xMax;
+        this->serializedCellMatrixFloats[i * 10 + 2] = cells[i]->yMin;
+        this->serializedCellMatrixFloats[i * 10 + 3] = cells[i]->yMax;
+        this->serializedCellMatrixFloats[i * 10 + 4] = cells[i]->zMin;
+        this->serializedCellMatrixFloats[i * 10 + 5] = cells[i]->zMax;
+        this->serializedCellMatrixFloats[i * 10 + 6] = cells[i]->xCenter;
+        this->serializedCellMatrixFloats[i * 10 + 7] = cells[i]->yCenter;
+        this->serializedCellMatrixFloats[i * 10 + 8] = cells[i]->zCenter;
+        this->serializedCellMatrixFloats[i * 10 + 9] = cells[i]->totalMass;
     }
 
-
-    for(int i=0; i<supportVector.size(); i++)
+    for(int i=0; i<cells.size(); i++)
     {
-        this->serializedCellMatrixInts[i*10 + 0] = supportVector[i]->particleCount;
+        this->serializedCellMatrixInts[i*10 + 0] = cells[i]->particleCount;
 
-        if(cell->particle)
+        if(cells[i]->particle)
         {
             for(int j=0; j<this->particleVector->size(); j++)
             {
-                if(&(*this->particleVector)[j] == cell->particle)
+                if(&(*this->particleVector)[j] == cells[i]->particle)
                 {
                     // Index of the particle in the particle vector.
                     this->serializedCellMatrixInts[i*10 + 1] = j;
@@ -104,15 +97,14 @@ void SerializedCell::serializeTree(Cell* cell)
 
         for(int j=0; j<8; j++)
         {
-            if(j < cell->children.size())
+            if(j < cells[i]->children.size())
             {
-                this->serializedCellMatrixInts[i*10 + 2 + j] = cell->children[j]->serialID;
+                this->serializedCellMatrixInts[i*10 + 2 + j] = cellAddressToSerializedIndex[cells[i]->children[j]];
             }
             else
             {
                 this->serializedCellMatrixInts[i*10 + 2 + j] = -1;
             }
-            //std::cout<<this->serializedCellMatrixInts[i*10+2+j]<<'\n';
         }
     }
 }
@@ -121,7 +113,6 @@ void SerializedCell::serializeTree(Cell* cell)
 Cell* SerializedCell::deserializeTree()
 {
     std::vector<Cell*> deserializedCells;
-
 
     for(int i=0; i<this->cellCount; i++)
     {
@@ -140,20 +131,28 @@ Cell* SerializedCell::deserializeTree()
         newCell->totalMass = serializedCellMatrixFloats[i*10 + 9];
 
         newCell->particleCount = serializedCellMatrixInts[i*10 + 0];
-        newCell->particle = &(*this->particleVector)[serializedCellMatrixInts[i*10 + 1]];
-    }
 
+        if(serializedCellMatrixInts[i*10 + 1] == -1)
+        {
+            newCell->particle = nullptr;
+        }
+        else
+        {
+            newCell->particle = &(*this->particleVector)[serializedCellMatrixInts[i*10 + 1]];
+        }
+    }
 
     for(int i=0; i<deserializedCells.size(); i++)
     {
         for(int j=0; j<8; j++)
         {
-            if(serializedCellMatrixInts[i*10 + 2 +j] != -1)
+            // Assumption: the cell either has the maximum children count or none.
+            if(serializedCellMatrixInts[i*10 + 2 + j] != -1)
             {
-                deserializedCells[i]->children.push_back(deserializedCells[serializedCellMatrixInts[i*10 + 2 +j]]);
+                deserializedCells[i]->children.push_back(deserializedCells[serializedCellMatrixInts[i*10 + 2 + j]]);
             }
         }
     }
 
-    return deserializedCells.back();
+    return deserializedCells[deserializedCells.size()-1];
 }

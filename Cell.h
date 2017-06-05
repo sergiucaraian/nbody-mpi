@@ -17,18 +17,18 @@ public:
     std::vector<Cell*> children;
     Particle* particle;
     int particleCount;
-    int serialID;
 
     void setCoordinates(float, float, float, float, float, float);
     bool isInsideCell(float, float, float);
     void insertParticle(Particle*);
-    void insertChildren(Cell*, int);
     void expandChildren();
-    bool isFarEnoughForClustering(Particle*);
+    void insertChildren(Cell*, int);
+    bool isFarEnoughFromParticleToUseAsCluster(Particle*);
 
 
     Cell();
     Cell(float, float, float, float, float, float);
+    Cell(const Cell &);
 
     ~Cell(){
         for(int i=0; i<this->children.size(); i++)
