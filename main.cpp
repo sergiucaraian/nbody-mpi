@@ -10,6 +10,7 @@
 #include <boost/mpi.hpp>
 #include <cstdlib>
 #include <queue>
+#include <algorithm>
 
 #include "common.h"
 #include "common/shader.hpp"
@@ -20,6 +21,9 @@
 namespace mpi = boost::mpi;
 using namespace std;
 
+// Performance
+int simulationCount = 0;
+double avgSimulationTime = 0;
 
 // Graphics
 GLFWwindow* window;
@@ -109,7 +113,7 @@ void initGraphics()
 
     // Camera matrix
     glm::mat4 View = glm::lookAt(
-            glm::vec3(2, 2,-2), // camera position
+            glm::vec3(2, 2, -2), // camera position
             glm::vec3(0,0,0), // looks at origin
             glm::vec3(0,1,0)  // Head is up (set to 0,-1,0 to look upside-down)
     );
@@ -182,25 +186,6 @@ void render()
     delete g_vertex_buffer_data;
 }
 
-
-int getNumberOfCellsInTree(Cell* cell)
-{
-    if(cell->children.size() == 0)
-    {
-        return 1;
-    }
-    else
-    {
-        int nrOfCells = 1;
-
-        for(int i=0; i<cell->children.size(); i++)
-        {
-            nrOfCells += getNumberOfCellsInTree(cell->children[i]);
-        }
-
-        return nrOfCells;
-    }
-}
 
 // Run a simulation step.
 void simulate()
@@ -291,7 +276,7 @@ void simulate()
             }
         }
 
-        // Calculate center of gravity and total mass for the root and first level nodes.
+        // Calculate the center of gravity, the total mass and the particle count for the root and first level nodes.
         for(int i=0; i<root->children.size(); i++)
         {
             for(int j=0; j<root->children[i]->children.size(); j++)
@@ -301,6 +286,7 @@ void simulate()
                 root->children[i]->zCenter = (root->children[i]->totalMass * root->children[i]->zCenter + root->children[i]->children[j]->totalMass * root->children[i]->children[j]->zCenter) / (root->children[i]->totalMass + root->children[i]->children[j]->totalMass);
 
                 root->children[i]->totalMass += root->children[i]->children[j]->totalMass;
+                root->children[i]->particleCount += root->children[i]->children[j]->particleCount;
             }
 
             root->xCenter = (root->totalMass * root->xCenter + root->children[i]->totalMass * root->children[i]->xCenter) / (root->totalMass + root->children[i]->totalMass);
@@ -308,6 +294,7 @@ void simulate()
             root->zCenter = (root->totalMass * root->zCenter + root->children[i]->totalMass * root->children[i]->zCenter) / (root->totalMass + root->children[i]->totalMass);
 
             root->totalMass += root->children[i]->totalMass;
+            root->particleCount += root->children[i]->particleCount;
         }
     }
 
@@ -343,7 +330,11 @@ void simulate()
 
             if(crtCell->isFarEnoughFromParticleToUseAsCluster(&particles[i]))
             {
-                particles[i].forcePush(crtCell, TIMESTEP);
+                // Ignore empty cells
+                if(crtCell->particleCount > 0)
+                {
+                    particles[i].forcePush(crtCell, TIMESTEP);
+                }
             }
             else
             {
@@ -380,7 +371,10 @@ int main(int argc, char** argv)
     mpi::environment env;
     mpi::communicator world;
 
-//    srand(123);
+    boost::mpi::timer timer;
+    double maxTimePerProcessInThisSimulation;
+
+    //srand(100);
     srand(time(NULL));
 
     if(world.rank() == 0)
@@ -392,7 +386,18 @@ int main(int argc, char** argv)
 
     while(true)
     {
+        timer.restart();
+
         simulate();
+
+        simulationCount++;
+        boost::mpi::reduce(world, timer.elapsed(), maxTimePerProcessInThisSimulation, mpi::maximum<double>(), 0);
+
+        if(world.rank() == 0)
+        {
+            avgSimulationTime = ((avgSimulationTime * (simulationCount-1)) + maxTimePerProcessInThisSimulation) / simulationCount;
+            std::cout<<avgSimulationTime<<"\n";
+        }
 
         // Wait for simulation to end on all instances.
         world.barrier();

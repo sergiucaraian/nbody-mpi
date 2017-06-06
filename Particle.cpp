@@ -1,6 +1,7 @@
 #include "Particle.h"
 #include "Cell.h"
 #include <cmath>
+#include <algorithm>
 
 
 Particle::Particle() {};
@@ -57,7 +58,7 @@ void Particle::plummerSphereDensity(std::vector<Particle>& particles, int n, int
         if(yy < pow(xx, 2) * pow((1 - pow(xx, 2)), 3.5))
         {
             nGeneratedParticles++;
-            v = xx * sqrt(2*G*n) * pow((pow(radius,2) + pow(a,2)), (-0.25));
+            v = xx * sqrt(2*G*n) * pow((pow(radius,2) + pow(a,2)), (-0.25)) / 1000;
 
             phi = randUniform() * 2 * PI;
             theta = (float)acos(randUniform()*2 - 1);
@@ -125,22 +126,27 @@ void Particle::scale(float scaleMin, float scaleMax, float xMin, float xMax, flo
 // Changes the velocity of the particle after the interaction with the cell.
 void Particle::forcePush(Cell* cell, float timeDelta)
 {
+    float dX = this->x - cell->xCenter;
+    float dY = this->y - cell->yCenter;
+    float dZ = this->z - cell->zCenter;
+    float d = (float)sqrt(dX * dX + dY * dY + dZ * dZ);
 
+    if(d==0)
+    {
+        // Particles intersected. Don't apply force push.
+        return;
+    }
 
-// OLD FORMULA
-//    float dX = this->x - cell->xCenter;
-//    float dY = this->y - cell->yCenter;
-//    float dZ = this->z - cell->zCenter;
-//
-//    float r = (float)pow(dX * dX + dY * dY + dZ * dZ , 0.5);
-//
-//    float fX = ((G * this->mass * cell->totalMass)/(float)pow(r,2)) * (dX/r);
-//    float fY = ((G * this->mass * cell->totalMass)/(float)pow(r,2)) * (dY/r);
-//    float fZ = ((G * this->mass * cell->totalMass)/(float)pow(r,2)) * (dZ/r);
-//
-//    this->vX = this->vX + fX * timeDelta/this->mass;
-//    this->vY = this->vY + fY * timeDelta/this->mass;
-//    this->vZ = this->vZ + fZ * timeDelta/this->mass;
+    // Used to avoid infinite.
+    float softening = 3e4;
+
+    float fX = -(G * this->mass * cell->totalMass)/(d*d + softening*softening) * (dX/d);
+    float fY = -(G * this->mass * cell->totalMass)/(d*d + softening*softening) * (dY/d);
+    float fZ = -(G * this->mass * cell->totalMass)/(d*d + softening*softening) * (dZ/d);
+
+    this->vX += timeDelta * fX / this->mass;
+    this->vY += timeDelta * fY / this->mass;
+    this->vZ += timeDelta * fZ / this->mass;
 }
 
 // Updates the particle position

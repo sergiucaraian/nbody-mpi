@@ -7,9 +7,9 @@ const int SOFTENING_LENGTH = 10;
 
 const float OMEGA = 0.5;
 const float PI = 3.141592;
-const float G = 6.67384e-11;
-const int MIN_MASS = 4000;
-const int MAX_MASS = 6000;
+const float G = 6.67384e-11 * 1e12;
+const int MIN_MASS = 25;
+const int MAX_MASS = 50;
 
 const float COORDINATE_MIN_VALUE = -1.4;
 const float COORDINATE_MAX_VALUE = 1.4;
